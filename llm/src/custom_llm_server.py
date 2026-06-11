@@ -1,8 +1,9 @@
 """
-Custom LLM Server — Mock Implementation
+Content Filter LLM Server — Mock + Filter Implementation
 
 This server demonstrates how to implement an OpenAI-compatible Chat Completions
-endpoint that works with Agora Conversational AI Engine.
+endpoint that works with Agora Conversational AI Engine, with a sentence-level
+content filter applied before the response is returned.
 
 Key points:
 - Must implement POST /chat/completions
@@ -10,8 +11,9 @@ Key points:
 - Must follow OpenAI Chat Completions response format
 - Agora cloud sends Authorization header with the api_key you configured
 
-This mock version returns pre-defined responses so you can test the full
-voice pipeline (STT → Custom LLM → TTS) without any external LLM dependency.
+The content *generation* is mocked (echoes the user) so you can trigger
+redaction by voice. The filter is real code. Replace moderate()'s body with a
+real moderator model for the "LLM-powered" variant.
 
 Replace the mock logic with your own:
 - Call your own model (local or remote)
@@ -23,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Dict, List, Optional, Union
@@ -107,58 +110,53 @@ class ChatCompletionRequest(BaseModel):
 
 
 # =============================================================================
-# Mock Response Logic
-# =============================================================================
-# Replace this section with your actual LLM logic:
-# - Call a local model (Ollama, vLLM, etc.)
-# - Call a remote API
-# - Implement RAG retrieval + generation
-# - Add business logic, filtering, routing
+# Content filter (mock, zero-key). The filter is real code; only the content
+# *generation* is mocked (it echoes the user) so you can trigger redaction by
+# voice. Replace moderate()'s body with a real moderator model for the
+# "LLM-powered" variant.
 # =============================================================================
 
-MOCK_RESPONSES = [
-    "I'm a custom LLM running on your own server! This response is coming through Agora's Conversational AI pipeline, from your custom endpoint, through TTS, and into your ears as speech.",
-    "This is a mock response demonstrating the custom LLM integration. In production, you'd replace this with calls to your own model or any LLM provider.",
-    "Hello! I'm responding from your custom LLM server. The full pipeline is working: your speech was transcribed by STT, sent to me, and my response will be converted to speech by TTS.",
-    "Great question! I'm a mock LLM server that demonstrates how to build a custom endpoint compatible with Agora's Conversational AI Engine. You can replace me with any logic you want.",
-]
-
-_response_counter = 0
+REDACTION = "Content filtered."
+_BANNED = [t.strip().lower() for t in os.getenv("FILTER_BANNED_TERMS", "strawberries").split(",") if t.strip()]
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
-def get_mock_response(messages: list) -> str:
-    """
-    Generate a mock response based on the conversation.
+def moderate(sentence: str) -> bool:
+    """Return True if the sentence is allowed, False if it must be redacted."""
+    lowered = sentence.lower()
+    return not any(term in lowered for term in _BANNED)
 
-    In a real implementation, this is where you'd:
-    - Extract the user's latest message
-    - Query your knowledge base / vector DB
-    - Call your own model
-    - Apply business logic
-    """
-    global _response_counter
 
-    # Extract the last user message for logging
-    last_user_msg = ""
+def filter_reply(text: str) -> str:
+    sentences = [s for s in _SENTENCE_SPLIT.split(text) if s]
+    return " ".join(s if moderate(s) else REDACTION for s in sentences)
+
+
+def _extract_last_user_text(messages: list) -> str:
     for msg in reversed(messages):
-        if hasattr(msg, "role") and msg.role == "user":
+        if getattr(msg, "role", None) == "user":
             content = msg.content
             if isinstance(content, str):
-                last_user_msg = content
-            elif isinstance(content, list) and len(content) > 0:
+                return content
+            if isinstance(content, list) and content:
                 first = content[0]
                 if isinstance(first, dict):
-                    last_user_msg = first.get("text", "")
-                elif hasattr(first, "text"):
-                    last_user_msg = first.text
-            break
+                    return first.get("text", "")
+                if hasattr(first, "text"):
+                    return first.text
+            return ""
+    return ""
 
-    logger.info(f"User said: {last_user_msg}")
 
-    # Cycle through mock responses
-    response = MOCK_RESPONSES[_response_counter % len(MOCK_RESPONSES)]
-    _response_counter += 1
-    return response
+def echo_reply(user_text: str) -> str:
+    """Mock generation: a clean opener, a sentence echoing the user (the one that
+    may get flagged), and a clean closer — so per-sentence redaction is visible."""
+    user_text = user_text.strip() or "nothing"
+    return f"Sure, I can help. You said: {user_text}. Is there anything else?"
+
+
+def run_agent_turn(messages: list) -> str:
+    return filter_reply(echo_reply(_extract_last_user_text(messages)))
 
 
 # =============================================================================
@@ -232,8 +230,8 @@ async def chat_completions(
             detail="Only streaming mode is supported. Set stream=true.",
         )
 
-    # Generate mock response
-    response_text = get_mock_response(request.messages)
+    # Generate and filter response
+    response_text = run_agent_turn(request.messages)
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     model = request.model or "mock-model"
 
@@ -259,12 +257,12 @@ async def chat_completions(
 @app.get("/health")
 async def health():
     """Health check."""
-    return {"status": "ok", "service": "custom-llm-mock"}
+    return {"status": "ok", "service": "content-filter-llm"}
 
 
 if __name__ == "__main__":
     port = int(os.getenv("CUSTOM_LLM_PORT", "8001"))
-    logger.info(f"Starting Custom LLM Server (Mock) on port {port}")
-    logger.info("This server returns mock responses — no LLM API key needed.")
+    logger.info(f"Starting Content Filter LLM Server on port {port}")
+    logger.info("Echoes user input + sentence-level keyword filter — no LLM API key needed.")
     logger.info(f"Endpoint: http://0.0.0.0:{port}/chat/completions")
     uvicorn.run(app, host="0.0.0.0", port=port)
