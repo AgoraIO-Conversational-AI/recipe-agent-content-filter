@@ -1,21 +1,35 @@
 # Agent Development Guide
 
-For coding agents working in `agent-recipes-python`. This repository is the
-**custom-llm** recipe (`Recipe Role: custom-llm`) in the Agora Conversational AI
-recipes family, derived from the base `agent-quickstart-python` template.
+For coding agents working in `recipe-agent-content-filter`. This repository is the
+**content-filter** recipe (`Recipe Role: content-filter`) in the Agora
+Conversational AI recipes family, derived from the `agent-quickstart-python`
+template and the `custom-llm` reference recipe.
 
 ## System shape
 
 - **`server/`** — Python FastAPI agent backend (:8000). Owns Agora token
   generation and agent session lifecycle. Uses the `CustomLLM` vendor to point the
-  agent's LLM stage at the custom LLM endpoint. SDK: `agora-agents>=2.0.0`
+  agent's LLM stage at the content-filter endpoint. SDK: `agora-agents>=2.0.0`
   (`import agora_agent`).
-- **`llm/`** — Python FastAPI custom LLM endpoint (:8001). OpenAI-compatible
-  `POST /chat/completions` mock that Agora cloud calls. No `agora-agents`
-  dependency. This is the component a developer replaces.
-- **`web/`** — Next.js 16 / React 19 / TypeScript frontend (:3000), resynced from
-  the base quickstart with custom-LLM branding only.
+- **`llm/`** — Python FastAPI content-filter LLM endpoint (:8001). OpenAI-compatible
+  `POST /chat/completions` server that Agora cloud calls. No `agora-agents`
+  dependency. Contains both a mock reply generator and a sentence-level keyword
+  filter. This is the component a developer extends or replaces.
+- **`web/`** — Next.js 16 / React 19 / TypeScript frontend (:3000).
 - Auth: Token007 from `AGORA_APP_ID` + `AGORA_APP_CERTIFICATE`.
+
+## Filter seam (`llm/src/custom_llm_server.py`)
+
+| Symbol | Role |
+| --- | --- |
+| `run_agent_turn(messages)` | Top-level: generate + filter |
+| `echo_reply(user_text)` | Mock generation |
+| `filter_reply(text)` | Sentence-level redaction driver |
+| `moderate(sentence)` | **The pluggable seam** — swap body for real moderator |
+| `FILTER_BANNED_TERMS` | `os.getenv("FILTER_BANNED_TERMS", "strawberries")`, comma-separated |
+| `REDACTION` | `"Content filtered."` |
+
+No tools, no storage — output redaction only.
 
 ## Routing / ownership
 
@@ -23,14 +37,14 @@ recipes family, derived from the base `agent-quickstart-python` template.
 - Browser-facing `/api/*` paths are Next rewrites (`web/next.config.ts`) to the
   agent backend; do not add `web/app/api/**/route.ts` for agent/token logic.
 - Token generation and agent lifecycle live in `server/src/`.
-- The OpenAI `/chat/completions` contract lives in `llm/src/`.
+- The OpenAI `/chat/completions` contract and the filter live in `llm/src/`.
 
 ## Supported modes
 
 - **Local:** `bun run dev` starts `llm` (:8001), `server` (:8000), and `web`
   (:3000). The web app calls `/api/*`; Next rewrites to
-  `AGENT_BACKEND_URL=http://localhost:8000`. The custom LLM endpoint must be
-  exposed publicly (ngrok) so Agora cloud can reach it.
+  `AGENT_BACKEND_URL=http://localhost:8000`. The content-filter LLM endpoint must
+  be exposed publicly (ngrok) so Agora cloud can reach it.
 - **Deploy:** deploy `web` (Next) + `server` (reachable FastAPI) + `llm` (publicly
   reachable FastAPI). Set `AGENT_BACKEND_URL` in the web deployment.
 
@@ -42,6 +56,8 @@ recipes family, derived from the base `agent-quickstart-python` template.
 - `CUSTOM_LLM_URL` is required and must be public; there is no localhost default.
 - Both `CUSTOM_LLM_URL` and `CUSTOM_LLM_API_KEY` are required by the `CustomLLM`
   vendor (the SDK rejects one without the other).
+- `FILTER_BANNED_TERMS` is optional (default `strawberries`), lives in
+  `llm/.env.local`.
 
 ## Anti-patterns
 
@@ -50,7 +66,8 @@ recipes family, derived from the base `agent-quickstart-python` template.
 - Do not default `CUSTOM_LLM_URL` to localhost.
 - Do not put `PORT` in `server/.env.example` (it would clobber the random port
   that `verify:local:fastapi` injects via `load_dotenv(override=True)`).
-- Do not link to `docs/ai/` — that progressive-disclosure tree is not present yet.
+- Do not reference `get_mock_response` — it has been removed and replaced by
+  `run_agent_turn` / `echo_reply` / `filter_reply` / `moderate`.
 
 ## Commands
 
@@ -82,4 +99,4 @@ Narrower checks: `bun run verify:backend`, `bun run verify:local:fastapi`,
   tense.
 - No AI tool names in commit messages or PR descriptions. No `Co-Authored-By`
   trailers. No `--no-verify`. No git config changes.
-- Branch names: `type/short-description` (e.g. `feat/custom-llm-tools`).
+- Branch names: `type/short-description` (e.g. `feat/content-filter-tools`).

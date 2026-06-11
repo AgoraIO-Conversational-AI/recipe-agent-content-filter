@@ -1,11 +1,32 @@
-# Custom LLM Endpoint — Mock
+# Content-Filter LLM Endpoint
 
 An OpenAI-compatible `POST /chat/completions` server (port 8001) that Agora cloud
-calls during a conversation. This mock returns canned streaming responses so you
-can exercise the full STT → custom LLM → TTS pipeline with **no LLM API key**.
+calls during a conversation. This endpoint echoes the user's words and then runs a
+**sentence-level keyword filter** before streaming the response — so you can
+trigger audible redaction just by saying a banned term.
 
 It has no `agora-agents` dependency — it is a plain FastAPI app, which is exactly
-the boundary you replace with your own model.
+the boundary you replace or extend with your own model and moderator.
+
+**Zero-key:** no LLM API key required.
+
+## How it works
+
+1. `echo_reply(user_text)` builds a three-sentence reply: a clean opener, a
+   sentence echoing the user (potentially flagged), and a clean closer.
+2. `filter_reply(text)` splits the reply at sentence boundaries (`.`, `!`, `?`)
+   and passes each sentence to `moderate()`.
+3. `moderate(sentence)` checks whether any term from `FILTER_BANNED_TERMS`
+   (default: `strawberries`, comma-separated, set via env var) appears in the
+   sentence. Returns `False` → sentence becomes `"Content filtered."`.
+4. The filtered text is streamed back as OpenAI SSE.
+
+## The pluggable seam
+
+`moderate()` in `src/custom_llm_server.py` is the **seam**. Its current body does
+a simple substring check. Replace it with a real moderator model call (e.g. an LLM
+classification request) to get the "LLM-powered" variant — `filter_reply()` and
+`run_agent_turn()` stay unchanged.
 
 ## The contract
 
@@ -27,6 +48,15 @@ pip install -r requirements.txt
 python src/custom_llm_server.py     # serves on CUSTOM_LLM_PORT (default 8001)
 ```
 
+## Environment variables
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `CUSTOM_LLM_PORT` | `8001` | Port the server listens on |
+| `FILTER_BANNED_TERMS` | `strawberries` | Comma-separated banned terms; case-insensitive |
+
+Put these in `llm/.env.local`.
+
 ## Expose it publicly
 
 Agora cloud — not the browser — calls this server, so it must be reachable from
@@ -44,8 +74,11 @@ This mock does **not** authenticate. A production endpoint should validate the
 `Authorization: Bearer <CUSTOM_LLM_API_KEY>` header that Agora cloud forwards
 (the key you set on the agent backend).
 
-## Replace the mock
+## Replacing the mock
 
-Edit `get_mock_response()` in `src/custom_llm_server.py`. Examples: call a local
-model (Ollama/vLLM), inject RAG context before generating, or route models by
-content.
+The filter + seam live in `run_agent_turn()` / `moderate()` / `filter_reply()` in
+`src/custom_llm_server.py`:
+
+- Replace `moderate()`'s body for a real moderator (LLM-powered variant).
+- Replace `echo_reply()` with a real LLM call for a production-grade response
+  pipeline that still runs through the filter.

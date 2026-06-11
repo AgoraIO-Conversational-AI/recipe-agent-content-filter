@@ -1,8 +1,9 @@
-# Architecture — Custom LLM Recipe
+# Architecture — Content Filter Recipe
 
 Three processes. The browser talks only to Next.js `/api/*`, which rewrites to the
-agent backend. The agent backend owns Agora tokens and agent lifecycle. The custom
-LLM endpoint is a separate service that **Agora cloud** calls directly.
+agent backend. The agent backend owns Agora tokens and agent lifecycle. The
+content-filter LLM endpoint is a separate service that **Agora cloud** calls
+directly.
 
 ## Request flow
 
@@ -17,10 +18,14 @@ Agent backend (server/, :8000)
   │  builds session with CustomLLM(base_url=CUSTOM_LLM_URL)
   ▼
 Agora ConvoAI Cloud
-  │  user speech → Deepgram STT (managed)
+  │  user speech → Deepgram STT (managed, nova-3)
   │  POST <CUSTOM_LLM_URL>/chat/completions   (Authorization: Bearer <key>)
   ▼
-Custom LLM endpoint (llm/, :8001, public via tunnel)
+Content-filter LLM endpoint (llm/, :8001, public via tunnel)
+  │  echo_reply()  — mock generation (echoes user text)
+  │  filter_reply() — splits reply at sentence boundaries
+  │  moderate()    — flags sentences containing banned terms
+  │  flagged sentences → "Content filtered."
   │  returns OpenAI SSE
   ▼
 Agora ConvoAI Cloud → MiniMax TTS (managed) → user hears speech
@@ -29,13 +34,28 @@ Agora ConvoAI Cloud → MiniMax TTS (managed) → user hears speech
 
 `POST /api/stopAgent { agentId }` ends the session.
 
+## Filter seam
+
+The filter is implemented in `llm/src/custom_llm_server.py`:
+
+| Symbol | Role |
+| --- | --- |
+| `run_agent_turn(messages)` | Top-level call: generate then filter |
+| `echo_reply(user_text)` | Mock generation — echoes the user in one sentence |
+| `filter_reply(text)` | Splits on sentence boundaries; calls `moderate()` per sentence |
+| `moderate(sentence)` | Returns `True` (allow) or `False` (redact); replace this body for the "LLM-powered" variant |
+| `FILTER_BANNED_TERMS` | Env var (`FILTER_BANNED_TERMS`, default `strawberries`), comma-separated |
+| `REDACTION` | The replacement string: `"Content filtered."` |
+
+No tools are called, no data is stored — this is output redaction only.
+
 ## Why two backends
 
 `server/` and `llm/` are split because of an **exposure asymmetry**:
 
 - `llm/` must be reachable by **Agora cloud over the public internet** (hence the
-  ngrok tunnel). It is the part you replace with your own model, and it has no
-  Agora dependency.
+  ngrok tunnel). It is the part you replace with your own model and filter, and it
+  has no Agora dependency.
 - `server/` only needs to be reachable by your web tier. It holds the Agora App
   Certificate and all token logic.
 
@@ -57,5 +77,5 @@ The browser calls these as `/api/*`; Next rewrites them to `AGENT_BACKEND_URL`.
 - Browser → agent backend: none (local dev).
 - Agent backend → Agora cloud: Token007, generated from `AGORA_APP_ID` +
   `AGORA_APP_CERTIFICATE`.
-- Agora cloud → custom LLM endpoint: `Authorization: Bearer <CUSTOM_LLM_API_KEY>`.
+- Agora cloud → content-filter LLM endpoint: `Authorization: Bearer <CUSTOM_LLM_API_KEY>`.
   The mock endpoint does not validate it; a production endpoint should.
