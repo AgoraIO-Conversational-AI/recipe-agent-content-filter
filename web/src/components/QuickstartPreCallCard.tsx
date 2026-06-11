@@ -24,11 +24,10 @@ export function QuickstartPreCallCard({
 			}}
 		>
 			<h1 className="text-[28px] font-medium leading-[1.2] text-white">
-				Custom LLM Recipe
+				Content Filter Recipe
 			</h1>
 			<p className="mt-[14px] text-sm font-medium leading-6 text-muted-foreground">
-				Bring your own LLM to Agora&apos;s Conversational AI Engine via a custom
-				OpenAI-compatible proxy server.
+				The agent&apos;s output is screened sentence-by-sentence; flagged sentences are replaced with &quot;Content filtered.&quot; Say a banned term to hear it redacted.
 			</p>
 
 			<Button
