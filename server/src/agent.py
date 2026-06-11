@@ -1,11 +1,11 @@
 """
-Agent — Custom LLM Recipe
+Agent — Content Filter Recipe
 
-High-level API for managing Agora Conversational AI Agents with a Custom LLM.
+High-level API for managing Agora Conversational AI Agents with a Content Filter LLM.
 
 Instead of using the built-in OpenAI vendor, this recipe configures the agent
-to use a custom LLM endpoint (your own proxy server) that is compatible with
-the OpenAI Chat Completions API format.
+to use a content-filter LLM endpoint that echoes user input and redacts flagged
+sentences before they reach TTS.
 """
 import logging
 import os
@@ -18,26 +18,20 @@ from agora_agent.agentkit.vendors import CustomLLM, DeepgramSTT, MiniMaxTTS
 
 logger = logging.getLogger("uvicorn.error")
 
-CUSTOM_LLM_PROMPT = """You are a helpful AI assistant powered by a custom LLM integration \
-with Agora's Conversational AI Engine.
-
-You can answer questions, have conversations, and help users with various tasks. \
-Keep most replies to one or two sentences unless the user explicitly asks for more detail.
-"""
+CUSTOM_LLM_PROMPT = """You are a helpful voice assistant. Your replies are screened by a content filter."""
 
 
 class Agent:
     """
-    High-level wrapper for Agora Conversational AI Agent with Custom LLM.
+    High-level wrapper for Agora Conversational AI Agent with Content Filter LLM.
 
-    The key difference from the quickstart is that this uses the OpenAI vendor
-    with a custom `base_url` pointing to your own OpenAI-compatible endpoint
-    (the custom_llm_server.py proxy). The Agora cloud will call your proxy
-    for chat completions instead of calling OpenAI directly.
+    Uses the CustomLLM vendor pointing at the content-filter endpoint (llm/).
+    The filter echoes the user's input and redacts sentences containing banned
+    terms before TTS synthesises them.
 
-    IMPORTANT: The custom LLM URL must be publicly accessible for the Agora
-    Conversational AI Engine (cloud) to reach it. For local development, use
-    a tunnel (ngrok, Cloudflare Tunnel) or GitHub Codespaces with public ports.
+    IMPORTANT: The content-filter LLM URL must be publicly accessible for the
+    Agora Conversational AI Engine (cloud) to reach it. For local development,
+    use a tunnel (ngrok, Cloudflare Tunnel) or GitHub Codespaces with public ports.
     """
 
     def __init__(self):
@@ -45,7 +39,7 @@ class Agent:
         self.app_certificate = os.getenv("AGORA_APP_CERTIFICATE")
         self.greeting = os.getenv(
             "AGENT_GREETING",
-            "Hi there! I'm your AI assistant powered by a custom LLM. How can I help?",
+            "Hi! Anything I say that's flagged gets filtered out.",
         )
 
         # Custom LLM configuration.
@@ -56,7 +50,7 @@ class Agent:
         # agent "start" while its LLM calls silently fail cloud-side.
         self.custom_llm_url = os.getenv("CUSTOM_LLM_URL")
         self.custom_llm_api_key = os.getenv("CUSTOM_LLM_API_KEY", "any-key-here")
-        self.custom_llm_model = os.getenv("CUSTOM_LLM_MODEL", "mock-model")
+        self.custom_llm_model = os.getenv("CUSTOM_LLM_MODEL", "filter-mock")
 
         if not self.app_id or not self.app_certificate:
             raise ValueError("AGORA_APP_ID and AGORA_APP_CERTIFICATE are required")
@@ -89,7 +83,7 @@ class Agent:
         user_uid: int,
         output_audio_codec: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Start agent with Custom LLM vendor chain."""
+        """Start agent with Content Filter LLM vendor chain."""
         if not channel_name or not str(channel_name).strip():
             raise ValueError("channel_name is required and cannot be empty")
         if agent_uid <= 0:
@@ -103,14 +97,11 @@ class Agent:
         # KEY DIFFERENCE: Use the SDK's CustomLLM vendor
         # ============================================================
         # The base quickstart uses a managed `OpenAI(model="gpt-4o-mini")`.
-        # This recipe instead points the LLM stage at our own OpenAI-compatible
-        # endpoint (the llm/ server) via the purpose-built `CustomLLM` vendor.
-        # CustomLLM stamps `vendor: "custom"` in the wire config and requires
-        # both base_url and api_key. Your endpoint can then:
-        # - Add custom preprocessing (RAG, context injection)
-        # - Route to different models dynamically
-        # - Add logging and analytics
-        # - Implement custom tool calling
+        # This recipe instead points the LLM stage at the content-filter endpoint
+        # (llm/) via the purpose-built `CustomLLM` vendor. CustomLLM stamps
+        # `vendor: "custom"` in the wire config and requires both base_url and
+        # api_key. The endpoint echoes the user, filters banned sentences, and
+        # streams the result back as OpenAI SSE.
         # ============================================================
         llm = CustomLLM(
             base_url=self.custom_llm_url,
@@ -182,7 +173,7 @@ class Agent:
         )
 
         logger.info(
-            "Starting Custom LLM agent channel=%s agent_uid=%s user_uid=%s llm_url=%s",
+            "Starting Content Filter agent channel=%s agent_uid=%s user_uid=%s llm_url=%s",
             channel_name,
             agent_uid,
             user_uid,
@@ -193,7 +184,7 @@ class Agent:
             agent_id = await session.start()
         except Exception:
             logger.exception(
-                "Failed to start Custom LLM agent channel=%s agent_uid=%s user_uid=%s",
+                "Failed to start Content Filter agent channel=%s agent_uid=%s user_uid=%s",
                 channel_name,
                 agent_uid,
                 user_uid,
@@ -204,7 +195,7 @@ class Agent:
         self._sessions[agent_id] = session
 
         logger.info(
-            "Started Custom LLM agent agent_id=%s channel=%s",
+            "Started Content Filter agent agent_id=%s channel=%s",
             agent_id,
             channel_name,
         )
