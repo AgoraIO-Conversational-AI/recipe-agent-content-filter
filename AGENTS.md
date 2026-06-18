@@ -9,7 +9,7 @@ template and the `custom-llm` reference recipe.
 
 - **`server/`** — Python FastAPI agent backend (:8000). Owns Agora token
   generation and agent session lifecycle. Uses the `CustomLLM` vendor to point the
-  agent's LLM stage at the content-filter endpoint. SDK: `agora-agents>=2.0.0`
+  agent's LLM stage at the content-filter endpoint. SDK: `agora-agents>=2.3.0`
   (`import agora_agent`).
 - **`server/src/llm.py`** — provider-agnostic FastAPI content-filter LLM endpoint,
   mounted into the API server at `/llm` (so Agora cloud calls
